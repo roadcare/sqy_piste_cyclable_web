@@ -158,6 +158,9 @@ L.tileLayer("https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png", {maxZoom:20, su
 var ctrl = L.control.layers(null, null, {collapsed:false}).addTo(map);
 map.on('zoomend', updateLabels);
 
+// display formatting: booleans → French (Vrai / Faux); everything else as-is.
+function fmtVal(v){ return v===true?'Vrai':(v===false?'Faux':v); }
+
 function popupHtml(props, withImg, order){
   var url = props.filename;  // pas_100 / road_data / image all carry `filename`
   var keys;
@@ -171,7 +174,7 @@ function popupHtml(props, withImg, order){
       .sort(function(a,b){return a.localeCompare(b);});  // order attributes by name
   }
   var rows = keys.map(function(k){
-      return '<tr><td class="k">'+k+'</td><td>'+props[k]+'</td></tr>';}).join('');
+      return '<tr><td class="k">'+k+'</td><td>'+fmtVal(props[k])+'</td></tr>';}).join('');
   var html = '<table>'+rows+'</table>';
   if(withImg && url){
     html += '<a href="'+url+'" target="_blank"><img src="'+url+'"/></a>';
@@ -375,7 +378,7 @@ function buildTable(feats){
   document.getElementById('pt-body').innerHTML = rows.map(function(f){ var p=f.properties;
     var tds=TABLE_COLS.map(function(c){ var v=p[c];
       if(typeof v==='number') v=Math.round(v*100)/100;
-      return '<td>'+(v==null?'':v)+'</td>'; }).join('');
+      return '<td>'+(v==null?'':fmtVal(v))+'</td>'; }).join('');
     return '<tr data-id="'+p.id+'"><td><button class="zbtn" data-id="'+p.id+'" title="Zoom">⊙</button></td>'+tds+'</tr>';
   }).join('');
   document.getElementById('tbl-count').textContent = rows.length;
@@ -480,7 +483,7 @@ function exportXlsx(){
   var feats=currentTableRows();
   var rows=feats.map(function(f){ var p=f.properties;
     return TABLE_COLS.map(function(c){ var v=p[c];
-      return (v===null||v===undefined)?'':v; }); });
+      return (v===null||v===undefined)?'':fmtVal(v); }); });
   var bytes=_buildXlsx(TABLE_COLS.slice(), rows);
   var blob=new Blob([bytes],
     {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
