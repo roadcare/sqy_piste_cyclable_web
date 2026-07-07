@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SQY — pistes cyclables</title>
+<link rel="stylesheet" href="lib/leaflet.css"/>
+<script src="lib/leaflet.js"></script>
+<script src="lib/chart.umd.min.js"></script>
+<style>
+  :root{ --bg:#f5f6f8; --card:#fff; --ink:#1f2733; --muted:#6b7785; --line:#e3e7ee;
+         --bon:#1a9641; --moyen:#fdae61; --mauvais:#d7191c; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font:13px/1.4 "Segoe UI",system-ui,sans-serif;color:var(--ink)}
+  #app{display:flex;height:100%}
+  #side{width:360px;min-width:360px;height:100%;overflow-y:auto;background:var(--bg);
+        border-right:1px solid var(--line);padding:14px}
+  #map{flex:1;height:100%}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .brand img{height:42px;width:auto}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;
+        padding:10px 12px;margin-bottom:12px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;
+           color:var(--muted);margin:0 0 8px}
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .kpi .v{font-size:18px;font-weight:700}
+  .kpi .l{font-size:11px;color:var(--muted)}
+  .filters{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .filters label{display:flex;flex-direction:column;font-size:11px;color:var(--muted);gap:3px}
+  .filters select,.filters input{font:13px inherit;padding:4px 6px;border:1px solid var(--line);
+        border-radius:5px;background:#fff;color:var(--ink)}
+  .filters .full{grid-column:1 / -1}
+  #reset{margin-top:8px;width:100%;padding:6px;border:1px solid var(--line);background:#fff;
+         border-radius:5px;cursor:pointer}
+  #reset:hover{background:#eef1f6}
+  .chartbox{position:relative;height:180px}
+  .leaflet-popup-content{max-height:240px;overflow:auto}
+  .leaflet-popup-content table{border-collapse:collapse;font-size:12px}
+  .leaflet-popup-content td{padding:1px 6px;border-bottom:1px solid #eee;vertical-align:top}
+  .leaflet-popup-content td.k{color:var(--muted);white-space:nowrap}
+  .leaflet-popup-content img{max-width:260px;height:auto;display:block;margin-top:4px}
+  .pas-label{background:rgba(255,255,255,.88);border:1px solid #c9ced6;box-shadow:none;
+             font:11px/1.2 sans-serif;color:#1f2733;padding:1px 4px;border-radius:3px;white-space:nowrap}
+  .pas-label:before{display:none!important}
+  #map.hide-labels .pas-label{display:none}
+  .deg-legend{background:rgba(255,255,255,.93);padding:6px 9px;border-radius:6px;
+              font:11px/1.35 sans-serif;max-height:46vh;overflow:auto;
+              box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  .deg-legend b{display:block;margin-bottom:4px}
+  .deg-legend i{display:inline-block;width:11px;height:11px;margin-right:5px;
+                vertical-align:-1px;border-radius:2px}
+  #tablewrap{position:fixed;left:360px;right:0;bottom:0;z-index:1200;background:#fff;
+             border-top:1px solid var(--line);font:12px sans-serif;box-shadow:0 -1px 6px rgba(0,0,0,.15)}
+  #tablebar{padding:5px 10px;cursor:pointer;background:#eef1f6;font-weight:600;user-select:none}
+  #tablewrap.collapsed .tbl-body{display:none}
+  .tbl-body{max-height:42vh;overflow:auto}
+  table.pt{border-collapse:collapse;width:100%}
+  table.pt th{position:sticky;top:0;background:#f5f6f8;padding:3px 6px;border-bottom:1px solid var(--line);
+              white-space:nowrap;text-align:left;cursor:pointer}
+  table.pt td{padding:2px 6px;border-bottom:1px solid #eee;white-space:nowrap}
+  table.pt tr.sel{background:#fde9a9}
+  .zbtn{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:3px;padding:0 5px}
+  #err{display:none;position:fixed;z-index:3000;top:0;left:0;right:0;background:#b00020;
+       color:#fff;padding:10px 14px;font:13px sans-serif}
+</style>
+</head>
+<body>
+<div id="err"></div>
+<div id="app">
+  <aside id="side">
+    <div class="brand">
+      <img src="logo.svg" alt="Roadcare" onerror="this.style.display='none'"/>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="v" id="k_n">–</div><div class="l">segments</div></div>
+      <div class="kpi"><div class="v" id="k_km">–</div><div class="l">linéaire (km)</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Filtres</h2>
+      <div class="filters">
+        <label class="full">Commune<select id="f_commune"></select></label>
+        <label class="full">Nom de rue<select id="f_rue"></select></label>
+        <label class="full">État (note classe)<select id="f_classe"></select></label>
+        <label class="full">Déformation<select id="f_deform"></select></label>
+      </div>
+      <button id="reset">Réinitialiser les filtres</button>
+    </div>
+
+    <div class="card">
+      <h2>Linéaire par état (m)</h2>
+      <div class="chartbox"><canvas id="c_classe"></canvas></div>
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<div id="tablewrap" class="collapsed">
+  <div id="tablebar"><span id="tbl-arrow">▸</span> Tableau pas_100 (<span id="tbl-count">0</span>)
+    — cliquer pour déplier ; ⊙ = zoom sur la ligne</div>
+  <div class="tbl-body">
+    <table class="pt"><thead id="pt-head"></thead><tbody id="pt-body"></tbody></table>
+  </div>
+</div>
+
+<script src="troncon_client.js"></script>
+<script src="pas_100.js"></script>
+<script src="image.js"></script>
+<script src="road_data.js"></script>
+<script>
+function showErr(m){var d=document.getElementById('err');if(d){d.style.display='block';d.innerHTML=m;}}
+window.addEventListener('error',function(e){showErr('Erreur JS : '+e.message);});
+try{
+if(typeof L==='undefined') throw new Error("Leaflet (leaflet.js) non chargé — pas d'accès au CDN ? Le dossier devrait contenir lib/leaflet.js.");
+if(typeof Chart==='undefined') throw new Error("Chart.js non chargé — pas d'accès au CDN ? Le dossier devrait contenir lib/chart.umd.min.js.");
+
+var LAYERS = [{"name": "troncon_client", "label": "troncon_client", "color": "#1f78b4", "visible": false, "popup_img": false}, {"name": "pas_100", "label": "pas_100 (\u00e9tat)", "color": "#e31a1c", "visible": true, "popup_img": true}, {"name": "image", "label": "images", "color": "#000000", "visible": false, "popup_img": true}, {"name": "road_data", "label": "degradations", "color": "#b15928", "visible": false, "popup_img": true}];
+var CLASSES = ['Bon','Moyen','Mauvais'];
+var CLASS_COLORS = {'Bon':'#1a9641','Moyen':'#fdae61','Mauvais':'#d7191c'};
+var NO_NOTE_COLOR = '#9e9e9e';   // pas_100 with no calculated note (no image)
+// image.note_classe is lower-case (bon/moyen/mauvais): green / yellow / red.
+var IMG_CLASS_COLORS = {'bon':'#1a9641','moyen':'#f4d000','mauvais':'#d7191c'};
+var LABEL_ZOOM = 17;
+// pas with no note_classe (no in-pas image → note not calculated) render grey.
+function classColor(c){ return CLASS_COLORS[c] || NO_NOTE_COLOR; }
+function imgColor(c){ return c ? (IMG_CLASS_COLORS[String(c).toLowerCase()] || NO_NOTE_COLOR)
+                                : NO_NOTE_COLOR; }
+function updateLabels(){
+  var el=document.getElementById('map');
+  if(el) el.classList.toggle('hide-labels', map.getZoom() < LABEL_ZOOM);
+}
+// distinct colour per degradations sous_classe (built from the data)
+var SOUS_PALETTE = ['#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
+  '#42d4f4','#f032e6','#bfef45','#fabed4','#469990','#dcbeff','#9a6324','#800000',
+  '#aaffc3','#808000','#000075','#a9a9a9','#ff7f00'];
+var sousColorMap = {};
+(function(){
+  var d = window['LAYER_road_data']; if(!d) return;
+  var vals = {};
+  d.features.forEach(function(f){ var v=f.properties.sous_classe; if(v) vals[v]=1; });
+  Object.keys(vals).sort().forEach(function(v,i){
+    sousColorMap[v] = SOUS_PALETTE[i % SOUS_PALETTE.length]; });
+})();
+function sousColor(v){ return sousColorMap[v] || '#888'; }
+// Skip features without usable geometry (guards against "Invalid LatLng").
+function hasGeom(f){ var g=f&&f.geometry; return !!(g && g.coordinates && g.coordinates.length); }
+
+var map = L.map('map', {preferCanvas:true});
+L.tileLayer("https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png", {maxZoom:20, subdomains:"abc",
+  attribution:"&copy; OpenStreetMap"}).addTo(map);
+var ctrl = L.control.layers(null, null, {collapsed:false}).addTo(map);
+map.on('zoomend', updateLabels);
+
+function popupHtml(props, withImg){
+  var url = props.filename;  // pas_100 / road_data / image all carry `filename`
+  var rows = Object.keys(props).filter(function(k){
+      return props[k]!==null && props[k]!=='' && k!=='filename';})
+    .sort(function(a,b){return a.localeCompare(b);})  // order attributes by name
+    .map(function(k){return '<tr><td class="k">'+k+'</td><td>'+props[k]+'</td></tr>';}).join('');
+  var html = '<table>'+rows+'</table>';
+  if(withImg && url){
+    html += '<a href="'+url+'" target="_blank"><img src="'+url+'"/></a>';
+  }
+  return html;
+}
+
+// ---- filter helpers (shared by pas_100 and the context layers) ----
+function val(id){ var e=document.getElementById(id); return e?e.value:''; }
+// déformation filter: '' = all, 'true' / 'false' = that value.
+// (the underlying column is exported as `deformation`, was `has_deformation`)
+function passDeform(p){
+  var d=val('f_deform'); if(!d) return true;
+  return String(p.deformation)===d;
+}
+
+// ---- context layers (troncon_client, road_data, image): toggleable ----
+// image / road_data are filtered by the has_deformation dropdown; they are
+// rebuilt (clearLayers + addData) when the filter changes or the layer is
+// toggled on, so the filter re-applies.
+var contextLayers = {};
+function buildContext(cfg){
+  var data = window['LAYER_'+cfg.name];
+  if(!data) return null;
+  // Style is a FUNCTION (L.geoJSON applies it to every layer, including
+  // circleMarkers, via resetStyle — so it must set the image colour here, not
+  // only in pointToLayer, or it gets overridden).
+  //   road_data : distinct colour per sous_classe
+  //   image     : borderless dot coloured by note_classe (bon/moyen/mauvais)
+  //   others    : fixed layer colour
+  var styleFn = function(f){
+    if(cfg.name==='road_data'){ var col=sousColor(f.properties.sous_classe);
+      return {color:col, weight:1, fillColor:col, fillOpacity:.55}; }
+    if(cfg.name==='image'){
+      return {stroke:false, fillColor:imgColor(f.properties.note_classe), fillOpacity:.85}; }
+    return {color:cfg.color, weight: cfg.name==='troncon_client'?2:1,
+            fillColor:cfg.color, fillOpacity:.3};
+  };
+  // troncon_client has no has_deformation notion → never filtered by it.
+  var deformable = (cfg.name==='image' || cfg.name==='road_data');
+  var lyr = L.geoJSON(data, {
+    filter: function(f){ return hasGeom(f) && (!deformable || passDeform(f.properties)); },
+    style: styleFn,
+    pointToLayer:function(f,ll){ return L.circleMarker(ll,{radius:3}); },
+    onEachFeature:function(f,l){l.bindPopup(popupHtml(f.properties,cfg.popup_img),{maxWidth:340});}
+  });
+  contextLayers[cfg.name] = {cfg:cfg, layer:lyr, data:data, deformable:deformable};
+  ctrl.addOverlay(lyr, cfg.label);
+  if(cfg.visible) lyr.addTo(map);
+  return lyr;
+}
+LAYERS.filter(function(c){return c.name!=='pas_100';}).forEach(buildContext);
+
+// Re-apply the has_deformation filter to the visible context layers.
+function refreshContext(){
+  Object.keys(contextLayers).forEach(function(n){
+    var o=contextLayers[n];
+    if(o.deformable && map.hasLayer(o.layer)){
+      o.layer.clearLayers(); o.layer.addData(o.data);
+    }
+  });
+}
+
+// legend for the degradations layer (shown only when that layer is active)
+var degLegend = L.control({position:'bottomright'});
+degLegend.onAdd = function(){
+  var div = L.DomUtil.create('div','deg-legend');
+  div.innerHTML = '<b>Dégradations — sous_classe</b>' +
+    Object.keys(sousColorMap).sort().map(function(v){
+      return '<div><i style="background:'+sousColorMap[v]+'"></i>'+v+'</div>'; }).join('');
+  return div;
+};
+map.on('overlayadd', function(e){
+  if(e.name==='degradations') degLegend.addTo(map);
+  // a context layer toggled on must reflect the current has_deformation filter
+  Object.keys(contextLayers).forEach(function(n){ var o=contextLayers[n];
+    if(o.deformable && o.layer===e.layer){ o.layer.clearLayers(); o.layer.addData(o.data); }});
+});
+map.on('overlayremove', function(e){ if(e.name==='degradations') map.removeControl(degLegend); });
+
+// ---- pas_100 analytic layer (filtered + coloured by note_classe) ----
+var pasData = window['LAYER_pas_100'] || {features:[]};
+var pasLayer = null;
+
+// pas_100 matches when it passes every active filter (commune / rue / état /
+// déformation). exceptId lets the option-sync skip one filter.
+function passPas(p, exceptId){
+  if(exceptId!=='f_commune' && val('f_commune') && String(p.commune)!==val('f_commune')) return false;
+  if(exceptId!=='f_rue'     && val('f_rue')     && String(p.nom_rue)!==val('f_rue')) return false;
+  if(exceptId!=='f_classe'  && val('f_classe')  && String(p.note_classe)!==val('f_classe')) return false;
+  if(exceptId!=='f_deform'  && val('f_deform')  && String(p.deformation)!==val('f_deform')) return false;
+  return true;
+}
+function matchPas(p){ return passPas(p, null); }
+function filteredPas(){
+  return pasData.features.filter(function(f){return matchPas(f.properties);});
+}
+function drawPas(feats){
+  if(pasLayer){ map.removeLayer(pasLayer); ctrl.removeLayer(pasLayer); }
+  pasLayer = L.geoJSON({type:'FeatureCollection',features:feats}, {
+    filter: hasGeom,
+    style:function(f){return {color:classColor(f.properties.note_classe),weight:5,opacity:.9,
+      fillColor:classColor(f.properties.note_classe),fillOpacity:.4};},
+    onEachFeature:function(f,l){
+      l.bindPopup(popupHtml(f.properties,true),{maxWidth:340});
+      var lab=f.properties.note_classe;
+      if(lab) l.bindTooltip(lab,{permanent:true,direction:'center',className:'pas-label',opacity:1});
+    }
+  });
+  ctrl.addOverlay(pasLayer, 'pas_100 (état)');
+  pasLayer.addTo(map);
+  updateLabels();
+}
+
+// ---- filters population (synchronised / cascading) ----
+// Each select's options are the distinct values found among the pas_100 that
+// match ALL OTHER active filters, so choosing e.g. a commune narrows the
+// nom_rue list (and an active déformation filter narrows it further).
+function optsFor(key, exceptId){
+  var set={};
+  pasData.features.forEach(function(f){ var p=f.properties;
+    if(passPas(p, exceptId)){ var v=p[key]; if(v!==null&&v!=='') set[v]=1; }});
+  return Object.keys(set).sort();
+}
+function reFill(id, key, label, order){
+  var s=document.getElementById(id); var cur=s.value;
+  var vals=optsFor(key, id);
+  if(order) vals = order.filter(function(v){return vals.indexOf(v)>=0;});
+  s.innerHTML = '<option value="">'+label+'</option>' +
+    vals.map(function(v){return '<option>'+v+'</option>';}).join('');
+  s.value = (vals.indexOf(cur)>=0) ? cur : '';
+}
+function fillDeform(){
+  var s=document.getElementById('f_deform'); var cur=s.value;
+  s.innerHTML = '<option value="">Toutes</option>' +
+                '<option value="true">Avec déformation</option>' +
+                '<option value="false">Sans déformation</option>';
+  s.value = cur;
+}
+function refreshFilters(){
+  reFill('f_commune','commune','Toutes');
+  reFill('f_rue','nom_rue','Toutes');
+  reFill('f_classe','note_classe','Tous', CLASSES);
+}
+fillDeform();
+refreshFilters();
+
+// ---- chart: linéaire (m) par note_classe ----
+var chClasse = new Chart(document.getElementById('c_classe'), {
+  type:'bar', data:{labels:[],datasets:[]},
+  options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false}}}});
+
+function updateChart(feats){
+  function classLen(c){ return feats.filter(function(f){return f.properties.note_classe===c;})
+    .reduce(function(s,f){return s+((Number(f.properties.cumulf)-Number(f.properties.cumuld))||0);},0);}
+  chClasse.data = {labels:CLASSES, datasets:[{label:'longueur (m)',
+    data:CLASSES.map(classLen), backgroundColor:CLASSES.map(classColor)}]};
+  chClasse.update();
+}
+
+function updateKPIs(feats){
+  var m=0;
+  feats.forEach(function(f){var p=f.properties; m += (Number(p.cumulf)-Number(p.cumuld))||0;});
+  document.getElementById('k_n').textContent = feats.length;
+  document.getElementById('k_km').textContent = (m/1000).toFixed(1);
+}
+
+function zoomToPas(){
+  if(!pasLayer) return;
+  try{ var bb=pasLayer.getBounds(); if(bb.isValid()) map.fitBounds(bb,{padding:[30,30]}); }catch(e){}
+}
+
+// ---- table view of pas_100 ----
+var TABLE_COLS = ['id','commune','nom_rue','type_revet','etat_revet',
+  'largeur','surface','note_globale','note_classe','vlm_indice','vlm_classe',
+  'deformation'];
+var pasById = {};
+pasData.features.forEach(function(f){ pasById[f.properties.id]=f; });
+var tsort = {col:null, dir:1};
+
+function buildTableHead(){
+  var head=document.getElementById('pt-head');
+  head.innerHTML =
+    '<tr><th></th>'+TABLE_COLS.map(function(c){return '<th data-col="'+c+'">'+c+'</th>';}).join('')+'</tr>';
+  Array.prototype.forEach.call(head.querySelectorAll('th[data-col]'), function(th){
+    th.addEventListener('click', function(){
+      var c=th.dataset.col;
+      if(tsort.col===c) tsort.dir=-tsort.dir; else { tsort.col=c; tsort.dir=1; }
+      buildTable(filteredPas());
+    });
+  });
+}
+
+function buildTable(feats){
+  var rows=feats.slice();
+  if(tsort.col){ var sc=tsort.col, d=tsort.dir;
+    rows.sort(function(a,b){ var x=a.properties[sc], y=b.properties[sc];
+      if(x==null) return 1; if(y==null) return -1;
+      if(typeof x==='number' && typeof y==='number') return (x-y)*d;
+      return String(x).localeCompare(String(y))*d; }); }
+  document.getElementById('pt-body').innerHTML = rows.map(function(f){ var p=f.properties;
+    var tds=TABLE_COLS.map(function(c){ var v=p[c];
+      if(typeof v==='number') v=Math.round(v*100)/100;
+      return '<td>'+(v==null?'':v)+'</td>'; }).join('');
+    return '<tr data-id="'+p.id+'"><td><button class="zbtn" data-id="'+p.id+'" title="Zoom">⊙</button></td>'+tds+'</tr>';
+  }).join('');
+  document.getElementById('tbl-count').textContent = rows.length;
+}
+
+function zoomToFeature(id){
+  var f=pasById[id]; if(!f) return;
+  try{ var b=L.geoJSON(f).getBounds();
+    if(b.isValid()) map.fitBounds(b,{padding:[40,40], maxZoom:18}); }catch(e){}
+}
+
+buildTableHead();
+(function(){
+  var body=document.getElementById('pt-body');
+  body.addEventListener('click', function(e){
+    var tr=e.target.closest ? e.target.closest('tr') : null;
+    if(tr){ Array.prototype.forEach.call(body.querySelectorAll('tr.sel'),
+              function(r){r.classList.remove('sel');}); tr.classList.add('sel'); }
+    var btn=e.target.closest ? e.target.closest('.zbtn') : null;
+    if(btn){ zoomToFeature(btn.getAttribute('data-id')); }
+  });
+  var bar=document.getElementById('tablebar');
+  bar.addEventListener('click', function(){
+    var w=document.getElementById('tablewrap'); w.classList.toggle('collapsed');
+    document.getElementById('tbl-arrow').textContent = w.classList.contains('collapsed')?'▸':'▾';
+  });
+})();
+
+function update(fit){
+  refreshFilters();            // cascade the dependent dropdowns first
+  var feats = filteredPas();
+  drawPas(feats);
+  updateKPIs(feats);
+  updateChart(feats);
+  buildTable(feats);
+  refreshContext();            // re-apply has_deformation to image / road_data
+  if(fit) zoomToPas();
+}
+
+// wire filters
+document.getElementById('f_classe').addEventListener('change', function(){update();});
+document.getElementById('f_rue').addEventListener('change', function(){update(true);});
+document.getElementById('f_commune').addEventListener('change', function(){update(true);});
+document.getElementById('f_deform').addEventListener('change', function(){update();});
+document.getElementById('reset').addEventListener('click', function(){
+  ['f_commune','f_rue','f_classe','f_deform'].forEach(function(id){
+    document.getElementById(id).value='';});
+  update(true);});
+
+update();
+
+// fit to all pas_100
+var b = L.latLngBounds([]);
+if(pasLayer){ try{ b.extend(pasLayer.getBounds()); }catch(e){} }
+if(b.isValid()) map.fitBounds(b); else map.setView([48.77,2.03],12);
+
+}catch(e){ showErr('Erreur : '+e.message); }
+</script>
+</body>
+</html>
