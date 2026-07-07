@@ -117,6 +117,7 @@ if(typeof L==='undefined') throw new Error("Leaflet (leaflet.js) non chargé —
 if(typeof Chart==='undefined') throw new Error("Chart.js non chargé — pas d'accès au CDN ? Le dossier devrait contenir lib/chart.umd.min.js.");
 
 var LAYERS = [{"name": "troncon_client", "label": "troncon_client", "color": "#1f78b4", "visible": false, "popup_img": false}, {"name": "pas_100", "label": "pas_100 (\u00e9tat)", "color": "#e31a1c", "visible": true, "popup_img": true}, {"name": "image", "label": "images", "color": "#000000", "visible": false, "popup_img": true}, {"name": "road_data", "label": "degradations", "color": "#b15928", "visible": false, "popup_img": true}];
+var PAS_ORDER = ["commune", "nom_rue", "gestionaire", "id_cycle", "id_tronc", "cumuld", "cumulf", "etat_revet", "circulation", "sdc_catego", "type_renov", "type_revet", "typo_piste", "largeur_am", "note_globale", "note_classe", "vlm_indice", "vlm_classe", "deformation", "note_arrachement", "note_bordure_endommagee", "note_deformation", "note_faiencage", "note_fissure_avec_deformation", "note_fissure_longitudinale", "note_fissure_longitudinale_grave", "note_fissure_transversale", "note_fissure_transversale_grave", "note_joint", "note_joint_avec_deformation", "note_nid_de_poule"];   // pas_100 popup: attributes to show, in order
 var CLASSES = ['Bon','Moyen','Mauvais'];
 var CLASS_COLORS = {'Bon':'#1a9641','Moyen':'#fdae61','Mauvais':'#d7191c'};
 var NO_NOTE_COLOR = '#9e9e9e';   // pas_100 with no calculated note (no image)
@@ -153,12 +154,20 @@ L.tileLayer("https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png", {maxZoom:20, su
 var ctrl = L.control.layers(null, null, {collapsed:false}).addTo(map);
 map.on('zoomend', updateLabels);
 
-function popupHtml(props, withImg){
+function popupHtml(props, withImg, order){
   var url = props.filename;  // pas_100 / road_data / image all carry `filename`
-  var rows = Object.keys(props).filter(function(k){
-      return props[k]!==null && props[k]!=='' && k!=='filename';})
-    .sort(function(a,b){return a.localeCompare(b);})  // order attributes by name
-    .map(function(k){return '<tr><td class="k">'+k+'</td><td>'+props[k]+'</td></tr>';}).join('');
+  var keys;
+  if(order){
+    // fixed attribute set + order (pas_100): only these keys, in this order
+    keys = order.filter(function(k){
+      return props[k]!==null && props[k]!==undefined && props[k]!=='' && k!=='filename';});
+  } else {
+    keys = Object.keys(props).filter(function(k){
+        return props[k]!==null && props[k]!=='' && k!=='filename';})
+      .sort(function(a,b){return a.localeCompare(b);});  // order attributes by name
+  }
+  var rows = keys.map(function(k){
+      return '<tr><td class="k">'+k+'</td><td>'+props[k]+'</td></tr>';}).join('');
   var html = '<table>'+rows+'</table>';
   if(withImg && url){
     html += '<a href="'+url+'" target="_blank"><img src="'+url+'"/></a>';
@@ -263,7 +272,7 @@ function drawPas(feats){
     style:function(f){return {color:classColor(f.properties.note_classe),weight:5,opacity:.9,
       fillColor:classColor(f.properties.note_classe),fillOpacity:.4};},
     onEachFeature:function(f,l){
-      l.bindPopup(popupHtml(f.properties,true),{maxWidth:340});
+      l.bindPopup(popupHtml(f.properties,true,PAS_ORDER),{maxWidth:340});
       var lab=f.properties.note_classe;
       if(lab) l.bindTooltip(lab,{permanent:true,direction:'center',className:'pas-label',opacity:1});
     }
