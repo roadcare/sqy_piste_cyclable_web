@@ -12,7 +12,13 @@
          --bon:#1a9641; --moyen:#fdae61; --mauvais:#d7191c; }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;font:13px/1.4 "Segoe UI",system-ui,sans-serif;color:var(--ink)}
-  #app{display:flex;height:100%}
+  body{display:flex;flex-direction:column}
+  /* blue banner on top */
+  #header{background:#295EEF;color:#fff;padding:7px 16px;font-size:16px;font-weight:bold;
+          flex-shrink:0;display:flex;align-items:center;gap:14px}
+  #header img{height:28px;width:auto}
+  #header .header-version{font-size:13px;opacity:.9;font-weight:600;margin-left:24px}
+  #app{display:flex;flex:1;min-height:0}
   #side{width:360px;min-width:360px;height:100%;overflow-y:auto;background:var(--bg);
         border-right:1px solid var(--line);padding:14px}
   #map{flex:1;height:100%}
@@ -20,8 +26,6 @@
      for (roughly) the print size before the dialog opens — avoids a blank map */
   body.preprint #side,body.preprint #tablewrap{display:none}
   body.preprint #map{position:fixed;inset:0;width:100vw;height:100vh;z-index:5000}
-  .brand{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-  .brand img{height:42px;width:auto}
   .card{background:var(--card);border:1px solid var(--line);border-radius:8px;
         padding:10px 12px;margin-bottom:12px}
   .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;
@@ -81,7 +85,7 @@
     html,body{height:auto;margin:0;background:#fff;
               -webkit-print-color-adjust:exact;print-color-adjust:exact}
     #app{display:block;height:auto}
-    #side,#tablewrap{display:none!important}
+    #header,#side,#tablewrap{display:none!important}
     .leaflet-control-zoom,.leaflet-control-layers,.leaflet-pdf-ctrl{display:none!important}
     /* normal flow — NOT position:fixed (that prints blank / mis-placed) */
     #map{width:100%;height:100vh}
@@ -92,12 +96,12 @@
 </head>
 <body>
 <div id="err"></div>
+<div id="header">
+  <img src="logo.svg" alt="" onerror="this.style.display='none'"/>
+  <span>SQY - Analyse Piste Cyclable</span>
+</div>
 <div id="app">
   <aside id="side">
-    <div class="brand">
-      <img src="logo.svg" alt="Roadcare" onerror="this.style.display='none'"/>
-    </div>
-
     <div class="kpis">
       <div class="kpi"><div class="v" id="k_n">–</div><div class="l">segments</div></div>
       <div class="kpi"><div class="v" id="k_km">–</div><div class="l">linéaire (km)</div></div>
