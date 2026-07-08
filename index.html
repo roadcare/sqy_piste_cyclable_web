@@ -67,9 +67,12 @@
   #tablewrap{position:fixed;left:360px;right:0;bottom:0;z-index:1200;background:#fff;
              border-top:1px solid var(--line);font:12px sans-serif;box-shadow:0 -1px 6px rgba(0,0,0,.15)}
   #tablebar{padding:5px 10px;cursor:pointer;background:#eef1f6;font-weight:600;user-select:none}
-  #xlsx-btn{float:right;margin:-2px 0 0;padding:3px 10px;border:1px solid #1a7f37;
-            background:#1a7f37;color:#fff;border-radius:5px;cursor:pointer;font-weight:600}
-  #xlsx-btn:hover{background:#166a2e}
+  .exp-group{float:right;display:flex;gap:6px;margin-top:-3px}
+  .exp{padding:3px 10px;border:none;color:#fff;border-radius:5px;cursor:pointer;font-weight:600}
+  #xlsx-btn{background:#1a7f37} #xlsx-btn:hover{background:#166a2e}
+  #csv-btn{background:#556270} #csv-btn:hover{background:#454f5b}
+  #geojson-btn{background:#1f78b4} #geojson-btn:hover{background:#185f8d}
+  #shp-btn{background:#b5651d} #shp-btn:hover{background:#8f4f16}
   #tablewrap.collapsed .tbl-body{display:none}
   .tbl-body{max-height:42vh;overflow:auto}
   table.pt{border-collapse:collapse;width:100%}
@@ -133,7 +136,12 @@
 <div id="tablewrap" class="collapsed">
   <div id="tablebar"><span id="tbl-arrow">▸</span> Tableau pas_100 (<span id="tbl-count">0</span>)
     — cliquer pour déplier ; ⊙ = zoom sur la ligne
-    <button id="xlsx-btn" title="Exporter le tableau filtré en XLSX">⬇ Export XLSX</button></div>
+    <span class="exp-group">
+      <button id="xlsx-btn" class="exp" title="Exporter le tableau filtré en Excel (.xlsx)">⬇ Excel</button>
+      <button id="csv-btn" class="exp" title="Exporter le tableau filtré en CSV">⬇ CSV</button>
+      <button id="geojson-btn" class="exp" title="Exporter les pas filtrés en GeoJSON">⬇ GeoJSON</button>
+      <button id="shp-btn" class="exp" title="Exporter les pas filtrés en Shapefile (.zip)">⬇ Shapefile</button>
+    </span></div>
   <div class="tbl-body">
     <table class="pt"><thead id="pt-head"></thead><tbody id="pt-body"></tbody></table>
   </div>
@@ -523,6 +531,157 @@ function exportXlsx(){
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 200);
 }
 
+// ---- CSV / GeoJSON / Shapefile exports of the filtered table (no library) ----
+function _download(blob, name){
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 200);
+}
+// filtered+sorted pas_100 as {props: spec columns (French booleans), geom}
+function tableExportRows(){
+  return currentTableRows().map(function(f){
+    var p={}; TABLE_COLS.forEach(function(c){ var v=f.properties[c];
+      p[c]=(v===null||v===undefined)?'':fmtVal(v); });
+    return {props:p, geom:f.geometry};
+  });
+}
+function _csvCell(v){ v=(v==null)?'':String(v);
+  return /[",\r\n;]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+function exportCsv(){
+  var rows=tableExportRows();
+  var lines=[TABLE_COLS.map(_csvCell).join(',')];
+  rows.forEach(function(r){ lines.push(TABLE_COLS.map(function(c){return _csvCell(r.props[c]);}).join(',')); });
+  _download(new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}),
+            'pas_100_'+rows.length+'.csv');   // UTF-8 BOM so Excel reads accents
+}
+function exportGeojson(){
+  var feats=tableExportRows().filter(function(r){return r.geom;}).map(function(r){
+    return {type:'Feature', properties:r.props, geometry:r.geom}; });
+  var fc={type:'FeatureCollection',
+          crs:{type:'name',properties:{name:'urn:ogc:def:crs:OGC:1.3:CRS84'}},
+          features:feats};
+  _download(new Blob([JSON.stringify(fc)],{type:'application/geo+json'}),
+            'pas_100_'+feats.length+'.geojson');
+}
+// --- minimal Shapefile writer: PolyLine (type 3), WGS84 — pas_100 is a line ---
+function _lineParts(geom){
+  var lines=[];
+  if(geom && geom.type==='LineString') lines=[geom.coordinates];
+  else if(geom && geom.type==='MultiLineString') lines=geom.coordinates;
+  var parts=[], pts=[];
+  lines.forEach(function(ln){ parts.push(pts.length);
+    for(var i=0;i<ln.length;i++) pts.push(ln[i]); });
+  return {parts:parts, points:pts};
+}
+function _shpBuffers(geoms){
+  var Xmin=Infinity,Ymin=Infinity,Xmax=-Infinity,Ymax=-Infinity;
+  var recLens=geoms.map(function(g){
+    g.points.forEach(function(p){ if(p[0]<Xmin)Xmin=p[0]; if(p[0]>Xmax)Xmax=p[0];
+      if(p[1]<Ymin)Ymin=p[1]; if(p[1]>Ymax)Ymax=p[1]; });
+    return 4+32+4+4+4*g.parts.length+16*g.points.length; });
+  if(!isFinite(Xmin)){ Xmin=Ymin=Xmax=Ymax=0; }
+  var shpLen=100, offsets=[];
+  geoms.forEach(function(g,i){ offsets.push(shpLen); shpLen+=8+recLens[i]; });
+  var shp=new DataView(new ArrayBuffer(shpLen));
+  var shx=new DataView(new ArrayBuffer(100+8*geoms.length));
+  function hdr(dv,len){
+    dv.setInt32(0,9994); dv.setInt32(24,len/2); dv.setInt32(28,1000,true);
+    dv.setInt32(32,3,true);   // shape type 3 = PolyLine
+    dv.setFloat64(36,Xmin,true); dv.setFloat64(44,Ymin,true);
+    dv.setFloat64(52,Xmax,true); dv.setFloat64(60,Ymax,true);
+    dv.setFloat64(68,0,true); dv.setFloat64(76,0,true);
+    dv.setFloat64(84,0,true); dv.setFloat64(92,0,true);
+  }
+  hdr(shp,shpLen); hdr(shx,100+8*geoms.length);
+  geoms.forEach(function(g,i){
+    var o=offsets[i];
+    shp.setInt32(o,i+1); shp.setInt32(o+4,recLens[i]/2);   // record header (big-endian)
+    var c=o+8;
+    shp.setInt32(c,3,true);   // PolyLine
+    var x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+    g.points.forEach(function(p){ if(p[0]<x0)x0=p[0]; if(p[0]>x1)x1=p[0];
+      if(p[1]<y0)y0=p[1]; if(p[1]>y1)y1=p[1]; });
+    if(!isFinite(x0)){ x0=y0=x1=y1=0; }
+    shp.setFloat64(c+4,x0,true); shp.setFloat64(c+12,y0,true);
+    shp.setFloat64(c+20,x1,true); shp.setFloat64(c+28,y1,true);
+    shp.setInt32(c+36,g.parts.length,true); shp.setInt32(c+40,g.points.length,true);
+    var pp=c+44;
+    g.parts.forEach(function(idx,k){ shp.setInt32(pp+4*k,idx,true); });
+    var ptOff=pp+4*g.parts.length;
+    g.points.forEach(function(p,k){ shp.setFloat64(ptOff+16*k,p[0],true);
+      shp.setFloat64(ptOff+16*k+8,p[1],true); });
+    shx.setInt32(100+8*i,o/2); shx.setInt32(100+8*i+4,recLens[i]/2);   // index (big-endian)
+  });
+  return { shp:new Uint8Array(shp.buffer), shx:new Uint8Array(shx.buffer) };
+}
+function _dbfBuffer(rows){
+  var enc=new TextEncoder();
+  var used={}, fields=TABLE_COLS.map(function(k){
+    var nm=k.replace(/[^0-9A-Za-z_]/g,'_').slice(0,10) || 'F';
+    var base=nm, n=1; while(used[nm]){ nm=base.slice(0,10-(''+n).length)+n; n++; } used[nm]=1;
+    return {key:k, name:nm}; });
+  fields.forEach(function(fd){
+    var t='C', w=1, dec=0, allNum=true, anyDec=false, maxc=1;
+    rows.forEach(function(r){ var v=r.props[fd.key];
+      if(v===''||v==null) return;
+      if(typeof v==='number' && isFinite(v)){ if(v%1!==0) anyDec=true; } else allNum=false; });
+    if(allNum){ t='N'; dec=anyDec?3:0;
+      rows.forEach(function(r){ var v=r.props[fd.key]; if(v===''||v==null)return;
+        var s=(dec?Number(v).toFixed(dec):String(Math.round(v))); if(s.length>maxc)maxc=s.length; });
+      w=Math.min(19,Math.max(maxc, dec?dec+2:1));
+    } else { t='C';
+      rows.forEach(function(r){ var v=r.props[fd.key]; if(v===''||v==null)return;
+        var b=enc.encode(String(v)).length; if(b>maxc)maxc=b; });
+      w=Math.min(254,Math.max(1,maxc)); }
+    fd.type=t; fd.width=w; fd.dec=dec; });
+  var recSize=1; fields.forEach(function(fd){ recSize+=fd.width; });
+  var hdrSize=32+32*fields.length+1;
+  var buf=new Uint8Array(hdrSize+recSize*rows.length+1);
+  var dv=new DataView(buf.buffer);
+  buf[0]=0x03;                                   // dBASE III
+  var d=new Date(); buf[1]=d.getFullYear()-1900; buf[2]=d.getMonth()+1; buf[3]=d.getDate();
+  dv.setInt32(4,rows.length,true);
+  dv.setInt16(8,hdrSize,true); dv.setInt16(10,recSize,true);
+  var off=32;
+  fields.forEach(function(fd){
+    var nb=enc.encode(fd.name); for(var i=0;i<nb.length && i<11;i++) buf[off+i]=nb[i];
+    buf[off+11]=fd.type.charCodeAt(0);
+    buf[off+16]=fd.width; buf[off+17]=fd.dec;
+    off+=32; });
+  buf[off++]=0x0D;                               // header terminator
+  rows.forEach(function(r){
+    buf[off++]=0x20;                             // not deleted
+    fields.forEach(function(fd){
+      var v=r.props[fd.key], s;
+      if(fd.type==='N'){ s=(v===''||v==null)?'':(fd.dec?Number(v).toFixed(fd.dec):String(Math.round(v))); }
+      else { s=(v==null)?'':String(v); }
+      var b=enc.encode(s);
+      if(b.length>fd.width) b=b.slice(0,fd.width);
+      if(fd.type==='N'){ for(var i=0;i<fd.width-b.length;i++) buf[off++]=0x20;
+        for(var j=0;j<b.length;j++) buf[off++]=b[j]; }                       // right-justified
+      else { for(var j2=0;j2<b.length;j2++) buf[off++]=b[j2];
+        for(var i2=0;i2<fd.width-b.length;i2++) buf[off++]=0x20; }           // left-justified
+    }); });
+  buf[off]=0x1A;                                 // EOF
+  return buf;
+}
+var WGS84_PRJ='GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]';
+function exportShapefile(){
+  var rows=tableExportRows().filter(function(r){
+    return r.geom && (r.geom.type==='LineString' || r.geom.type==='MultiLineString'); });
+  if(!rows.length){ showErr('Aucun pas (ligne) à exporter.'); return; }
+  var geoms=rows.map(function(r){ return _lineParts(r.geom); });
+  var sh=_shpBuffers(geoms);
+  var files=[
+    {name:'pas_100.shp', data:sh.shp},
+    {name:'pas_100.shx', data:sh.shx},
+    {name:'pas_100.dbf', data:_dbfBuffer(rows)},
+    {name:'pas_100.prj', data:_bytes(WGS84_PRJ)},
+    {name:'pas_100.cpg', data:_bytes('UTF-8')}
+  ];
+  _download(new Blob([_zip(files)],{type:'application/zip'}), 'pas_100_shp_'+rows.length+'.zip');
+}
+
 buildTableHead();
 (function(){
   var body=document.getElementById('pt-body');
@@ -538,8 +697,11 @@ buildTableHead();
     var w=document.getElementById('tablewrap'); w.classList.toggle('collapsed');
     document.getElementById('tbl-arrow').textContent = w.classList.contains('collapsed')?'▸':'▾';
   });
-  var xb=document.getElementById('xlsx-btn');
-  if(xb) xb.addEventListener('click', function(e){ e.stopPropagation(); exportXlsx(); });
+  [['xlsx-btn',exportXlsx],['csv-btn',exportCsv],
+   ['geojson-btn',exportGeojson],['shp-btn',exportShapefile]].forEach(function(pair){
+    var b=document.getElementById(pair[0]);
+    if(b) b.addEventListener('click', function(e){ e.stopPropagation(); pair[1](); });
+  });
 })();
 
 function update(fit){
