@@ -11,7 +11,8 @@
   :root{ --bg:#f5f6f8; --card:#fff; --ink:#1f2733; --muted:#6b7785; --line:#e3e7ee;
          --bon:#1a9641; --moyen:#fdae61; --mauvais:#d7191c; }
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;font:13px/1.4 "Segoe UI",system-ui,sans-serif;color:var(--ink)}
+  html,body{margin:0;height:100%;font:13px/1.4 Arial,"Segoe UI",system-ui,sans-serif;color:var(--ink)}
+  html{zoom:100%;-webkit-text-size-adjust:100%;text-size-adjust:100%}   /* render at 100% */
   body{display:flex;flex-direction:column}
   /* blue banner on top */
   #header{background:#295EEF;color:#fff;padding:7px 16px;font-family:Arial,sans-serif;
@@ -23,6 +24,11 @@
   #side{width:360px;min-width:360px;height:100%;overflow-y:auto;background:var(--bg);
         border-right:1px solid var(--line);padding:14px}
   #map{flex:1;height:100%}
+  /* right-docked info panel (selected-segment details) */
+  #right{width:320px;min-width:320px;height:100%;overflow-y:auto;background:var(--bg);
+         border-left:1px solid var(--line);padding:14px}
+  #right .rp-title{font-size:12px;text-transform:uppercase;letter-spacing:.04em;
+                   color:var(--muted);margin:0 0 10px}
   /* no black focus outline / border around the map view */
   #map,.leaflet-container{outline:none!important;border:none!important}
   /* pre-print: blow the map up to the full window so Leaflet loads the tiles
@@ -49,6 +55,12 @@
   .leaflet-pdf-btn{display:flex!important;align-items:center;justify-content:center;color:#333}
   .leaflet-pdf-btn:hover{color:#000}
   .chartbox{position:relative;height:180px}
+  /* selected-segment info (right panel): photo on top, then attributes */
+  #right .hint{color:var(--muted)}
+  #infobody img{max-width:100%;height:auto;display:block;margin:0 0 10px;border-radius:4px}
+  #infobody table{border-collapse:collapse;font-size:12px;width:100%}
+  #infobody td{padding:2px 6px;border-bottom:1px solid #eee;vertical-align:top}
+  #infobody td.k{color:var(--muted);white-space:nowrap}
   .leaflet-popup-content{max-height:240px;overflow:auto}
   .leaflet-popup-content table{border-collapse:collapse;font-size:12px}
   .leaflet-popup-content td{padding:1px 6px;border-bottom:1px solid #eee;vertical-align:top}
@@ -64,7 +76,7 @@
   .deg-legend b{display:block;margin-bottom:4px}
   .deg-legend i{display:inline-block;width:11px;height:11px;margin-right:5px;
                 vertical-align:-1px;border-radius:2px}
-  #tablewrap{position:fixed;left:360px;right:0;bottom:0;z-index:1200;background:#fff;
+  #tablewrap{position:fixed;left:360px;right:320px;bottom:0;z-index:1200;background:#fff;
              border-top:1px solid var(--line);font:12px sans-serif;box-shadow:0 -1px 6px rgba(0,0,0,.15)}
   #tablebar{padding:5px 10px;cursor:pointer;background:#eef1f6;font-weight:600;user-select:none}
   .exp-group{float:right;display:flex;gap:6px;margin-top:-3px}
@@ -92,7 +104,7 @@
     html,body{height:auto;margin:0;background:#fff;
               -webkit-print-color-adjust:exact;print-color-adjust:exact}
     #app{display:block;height:auto}
-    #header,#side,#tablewrap{display:none!important}
+    #header,#side,#right,#tablewrap{display:none!important}
     .leaflet-control-zoom,.leaflet-control-layers,.leaflet-pdf-ctrl{display:none!important}
     /* normal flow — NOT position:fixed (that prints blank / mis-placed) */
     #map{width:100%;height:100vh}
@@ -132,6 +144,10 @@
     </div>
   </aside>
   <div id="map"></div>
+  <aside id="right">
+    <h2 class="rp-title">Segment sélectionné</h2>
+    <div id="infobody"><div class="hint">Cliquer un segment sur la carte.</div></div>
+  </aside>
 </div>
 
 <div id="tablewrap" class="collapsed">
@@ -312,13 +328,15 @@ function filteredPas(){
   return pasData.features.filter(function(f){return matchPas(f.properties);});
 }
 function drawPas(feats){
+  clearSelection();                 // old layer (with its highlight) is discarded
   if(pasLayer){ map.removeLayer(pasLayer); ctrl.removeLayer(pasLayer); }
   pasLayer = L.geoJSON({type:'FeatureCollection',features:feats}, {
     filter: hasGeom,
     style:function(f){return {color:classColor(f.properties.note_classe),weight:5,opacity:.9,
       fillColor:classColor(f.properties.note_classe),fillOpacity:.4};},
     onEachFeature:function(f,l){
-      l.bindPopup(popupHtml(f.properties,true,PAS_ORDER),{maxWidth:340});
+      // no popup — clicking selects the segment (highlight + info in side panel)
+      l.on('click', function(){ selectPas(f, l); });
       var lab=f.properties.note_classe;
       if(lab) l.bindTooltip(lab,{permanent:true,direction:'center',className:'pas-label',opacity:1});
     }
@@ -326,6 +344,32 @@ function drawPas(feats){
   ctrl.addOverlay(pasLayer, 'pas_100 (état)');
   pasLayer.addTo(map);
   updateLabels();
+}
+
+// ---- selected-segment highlight + info in the side panel (no popup) ----
+var _selLayer = null;
+var HILITE_STYLE = {color:'#1b6bff', weight:9, opacity:1};
+function clearSelection(){
+  if(_selLayer && pasLayer){ try{ pasLayer.resetStyle(_selLayer); }catch(e){} }
+  _selLayer = null;
+  var b=document.getElementById('infobody');
+  if(b) b.innerHTML = '<div class="hint">Cliquer un segment sur la carte.</div>';
+}
+// right-panel content: PHOTO on top, then the attribute table (PAS_ORDER).
+function infoPanelHtml(props){
+  var url = props.filename;
+  var img = url ? '<a href="'+url+'" target="_blank"><img src="'+url+'"/></a>' : '';
+  var rows = PAS_ORDER.filter(function(k){ var v=props[k];
+      return v!==null && v!==undefined && v!=='' && k!=='filename'; })
+    .map(function(k){ return '<tr><td class="k">'+k+'</td><td>'+fmtVal(props[k])+'</td></tr>'; }).join('');
+  return img + '<table>'+rows+'</table>';
+}
+function selectPas(f, l){
+  if(_selLayer && _selLayer!==l && pasLayer){ try{ pasLayer.resetStyle(_selLayer); }catch(e){} }
+  _selLayer = l;
+  l.setStyle(HILITE_STYLE);
+  if(l.bringToFront) try{ l.bringToFront(); }catch(e){}
+  document.getElementById('infobody').innerHTML = infoPanelHtml(f.properties);
 }
 
 // ---- filters population (synchronised / cascading) ----
