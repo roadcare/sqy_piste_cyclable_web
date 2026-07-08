@@ -16,6 +16,10 @@
   #side{width:360px;min-width:360px;height:100%;overflow-y:auto;background:var(--bg);
         border-right:1px solid var(--line);padding:14px}
   #map{flex:1;height:100%}
+  /* pre-print: blow the map up to the full window so Leaflet loads the tiles
+     for (roughly) the print size before the dialog opens — avoids a blank map */
+  body.preprint #side,body.preprint #tablewrap{display:none}
+  body.preprint #map{position:fixed;inset:0;width:100vw;height:100vh;z-index:5000}
   .brand{display:flex;align-items:center;gap:10px;margin-bottom:12px}
   .brand img{height:42px;width:auto}
   .card{background:var(--card);border:1px solid var(--line);border-radius:8px;
@@ -34,6 +38,9 @@
   #reset{margin-top:8px;width:100%;padding:6px;border:1px solid var(--line);background:#fff;
          border-radius:5px;cursor:pointer}
   #reset:hover{background:#eef1f6}
+  /* small icon-only PDF button, styled like the Leaflet zoom (+/-) control */
+  .leaflet-pdf-btn{display:flex!important;align-items:center;justify-content:center;color:#333}
+  .leaflet-pdf-btn:hover{color:#000}
   .chartbox{position:relative;height:180px}
   .leaflet-popup-content{max-height:240px;overflow:auto}
   .leaflet-popup-content table{border-collapse:collapse;font-size:12px}
@@ -66,6 +73,21 @@
   .zbtn{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:3px;padding:0 5px}
   #err{display:none;position:fixed;z-index:3000;top:0;left:0;right:0;background:#b00020;
        color:#fff;padding:10px 14px;font:13px sans-serif}
+  /* Print / "Save as PDF": export the MAP VIEW ONLY (full page), dropping the
+     sidebar, the bottom table and the interactive controls (zoom, layers, the
+     PDF button itself). The degradations legend + attribution stay. */
+  @page{ size: landscape; margin: 0 }   /* full-bleed + drops the browser file/URL footer */
+  @media print{
+    html,body{height:auto;margin:0;background:#fff;
+              -webkit-print-color-adjust:exact;print-color-adjust:exact}
+    #app{display:block;height:auto}
+    #side,#tablewrap{display:none!important}
+    .leaflet-control-zoom,.leaflet-control-layers,.leaflet-pdf-ctrl{display:none!important}
+    /* normal flow — NOT position:fixed (that prints blank / mis-placed) */
+    #map{width:100%;height:100vh}
+    .leaflet-tile-pane,.leaflet-overlay-pane,.leaflet-marker-pane{
+      -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
 </style>
 </head>
 <body>
@@ -153,8 +175,8 @@ function sousColor(v){ return sousColorMap[v] || '#888'; }
 function hasGeom(f){ var g=f&&f.geometry; return !!(g && g.coordinates && g.coordinates.length); }
 
 var map = L.map('map', {preferCanvas:true});
-L.tileLayer("https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png", {maxZoom:20, subdomains:"abc",
-  attribution:"&copy; OpenStreetMap"}).addTo(map);
+var baseTiles = L.tileLayer("https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png", {maxZoom:20, subdomains:"abc",
+  attribution:"&copy; OpenStreetMap", crossOrigin:true}).addTo(map);
 var ctrl = L.control.layers(null, null, {collapsed:false}).addTo(map);
 map.on('zoomend', updateLabels);
 
@@ -532,6 +554,43 @@ document.getElementById('reset').addEventListener('click', function(){
   ['f_commune','f_rue','f_classe','f_deform'].forEach(function(id){
     document.getElementById(id).value='';});
   update(true);});
+
+// export PDF via the browser print dialog ("Save as PDF") — no library needed.
+// small printer-icon button on the map, just under the zoom (+/-) control.
+// Pre-warm the tiles at full-window size, wait for them to load, then print;
+// this is what stops the printed map from coming out blank.
+function exportPdf(){
+  document.body.classList.add('preprint');   // map → full window (loads print-size tiles)
+  var printed=false;
+  function go(){ if(printed) return; printed=true;
+    window.print();
+    document.body.classList.remove('preprint');
+    map.invalidateSize();
+  }
+  // print shortly after the base tiles finish loading (attach BEFORE resizing),
+  // with a hard timeout fallback in case 'load' never fires.
+  baseTiles.once('load', function(){ setTimeout(go, 250); });
+  setTimeout(go, 1500);
+  map.invalidateSize();       // resize now → triggers the tile loads
+}
+var pdfCtrl = L.control({position:'topleft'});
+pdfCtrl.onAdd = function(){
+  var div = L.DomUtil.create('div','leaflet-bar leaflet-pdf-ctrl');
+  var a = L.DomUtil.create('a','leaflet-pdf-btn', div);
+  a.href='#'; a.title='Export en PDF'; a.setAttribute('role','button');
+  a.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" '+
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+
+    '<polyline points="6 9 6 2 18 2 18 9"/>'+
+    '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>'+
+    '<rect x="6" y="14" width="12" height="8"/></svg>';
+  L.DomEvent.disableClickPropagation(div);
+  L.DomEvent.on(a,'click', function(e){ L.DomEvent.stop(e); exportPdf(); });
+  return div;
+};
+pdfCtrl.addTo(map);
+window.addEventListener('beforeprint', function(){ try{ map.invalidateSize(); }catch(e){} });
+window.addEventListener('afterprint', function(){
+  try{ document.body.classList.remove('preprint'); map.invalidateSize(); }catch(e){} });
 
 update();
 
